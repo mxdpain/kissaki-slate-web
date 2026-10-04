@@ -19,8 +19,8 @@
   const snapshot = () => state.lists.slice().sort((a,b) => (names.includes(a)?names.indexOf(a):99)-(names.includes(b)?names.indexOf(b):99) || a.localeCompare(b)).map(name => ({
     id:name, title:name, tasks:Object.values(state.rows).filter(r=>r.list===name).sort(rowOrder).map(r=>({...r,i:r.id}))
   }));
-  function render() {
-    if (receiveReady && !editing && state) receive({event:'lists', lists:snapshot(), current:state.current, today:today()});
+  function render(force = false) {
+    if (receiveReady && (force || !editing) && state) receive({event:'lists', lists:snapshot(), current:state.current, today:today()});
   }
   function validConfig(value) {
     const url = new URL(value.supabase_url);
@@ -128,7 +128,7 @@
         const name=msg.title.replace(/[\\/:]+/g,'-').trim();
         if(name&&!/^[._]/.test(name)){queue('list',{name});state.current=name;save();}
       }
-      render();syncStatus();void sync();
+      render(true);syncStatus();void sync();
     } catch(e){syncStatus(e.message);alert(e.message);}
   }
   function download(lid){
