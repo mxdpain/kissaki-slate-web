@@ -1,0 +1,484 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Slate</title>
+<style>
+  :root {
+    --bg: rgba(10,10,11,.92);
+    --pan: #111112;
+    --line: rgba(255,255,255,.07);
+    --tx: #f2f2f3;
+    --mut: #8a8a90;
+    --dim: #4e4e54;
+    --acc: #ffffff;
+    --warn: #f2f2f3;
+    --blue: #bdbdc2;
+    --amber: #bdbdc2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: transparent; }
+  body {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif;
+    color: var(--tx);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  header, .nav, .box, .x, .grip, #done-hd, footer, #picker .opt { -webkit-user-select: none; user-select: none; }
+  #app {
+    height: 100%;
+    display: flex; flex-direction: column;
+    background: #070708;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    transition: border-color .15s;
+  }
+  /* paper grain */
+  #app::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+    opacity: .09; mix-blend-mode: screen;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  #app > *:not(#bg) { position: relative; z-index: 1; }
+  #bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+  body.active #app { border-color: rgba(255,255,255,.28); }
+
+  /* header ------------------------------------------------------------- */
+  header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 10px 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  #listname {
+    flex: 1; min-width: 0;
+    font: 700 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--tx);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: grab;
+  }
+  #pick { font-size: 11px; }
+  .nav {
+    width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center;
+    color: var(--mut); cursor: pointer; font-size: 14px;
+  }
+  .nav:hover { background: rgba(255,255,255,.06); color: var(--tx); }
+  #prev, #next {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+    color: var(--tx); font-size: 17px; font-weight: 600; line-height: 1;
+    padding-bottom: 2px;
+  }
+  #prev:hover, #next:hover { background: #f2f2f3; color: #0a0a0b; border-color: #f2f2f3; }
+  #count { font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif; color: var(--dim); padding: 0 4px; }
+  header { cursor: grab; }
+  header.dragging { cursor: grabbing; }
+  #min { font-size: 15px; line-height: 1; }
+  body.collapsed #addwrap, body.collapsed #tasks, body.collapsed footer { display: none; }
+  body.collapsed header { border-bottom: 0; }
+  body.collapsed #app { height: 44px; }
+
+  /* list picker -------------------------------------------------------- */
+  #picker {
+    display: none; position: absolute; top: 40px; left: 10px; right: 10px;
+    background: #1a1a1f; border: 1px solid var(--line); border-radius: 10px;
+    padding: 6px; z-index: 5; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  }
+  #picker.open { display: block; }
+  #picker .opt {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 13px;
+  }
+  #picker .opt:hover { background: rgba(255,255,255,.06); }
+  #picker .opt.cur { color: var(--tx); background: rgba(255,255,255,.06); }
+  #picker .opt span { color: var(--dim); font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif; }
+  #picker .opt.new { color: var(--mut); border-top: 1px solid var(--line); margin-top: 4px; padding-top: 9px; }
+  #picker input {
+    width: 100%; margin-top: 4px; padding: 7px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: #0d0d10; color: var(--tx); font: inherit; outline: none;
+  }
+
+  /* add ---------------------------------------------------------------- */
+  #addwrap { padding: 8px 10px 4px; }
+  #add {
+    width: 100%; padding: 9px 11px;
+    background: #ebeae6; border: 1px solid #ebeae6; border-radius: 9px;
+    color: #0a0a0b; font: inherit; outline: none;
+    transition: border-color .12s;
+  }
+  #add:focus { border-color: #fff; background: #f4f3f0; }
+  #add::placeholder { color: #8f8f8a; }
+
+  /* tasks -------------------------------------------------------------- */
+  #tasks { flex: 1; overflow-y: auto; padding: 4px 6px 8px; }
+  #tasks.out-l { animation: outL .16s ease-in forwards; }
+  #tasks.out-r { animation: outR .16s ease-in forwards; }
+  #tasks.in-l  { animation: inL  .22s cubic-bezier(.2,.8,.2,1) forwards; }
+  #tasks.in-r  { animation: inR  .22s cubic-bezier(.2,.8,.2,1) forwards; }
+  @keyframes outL { to { transform: translateX(-28px); opacity: 0; } }
+  @keyframes outR { to { transform: translateX(28px);  opacity: 0; } }
+  @keyframes inL  { from { transform: translateX(28px);  opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes inR  { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
+  #listname { transition: opacity .12s; }
+  #listname.swap { opacity: 0; }
+  #tasks::-webkit-scrollbar { width: 6px; }
+  #tasks::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+  .task {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 6px 6px 6px 4px; border-radius: 8px;
+    position: relative;
+  }
+  .task:hover { background: rgba(255,255,255,.04); }
+  .task.drag { opacity: .35; }
+  .task.over { box-shadow: inset 0 2px 0 rgba(255,255,255,.5); }
+  .box {
+    flex: none; width: 12px; height: 12px; margin-top: 4px;
+    border: 1.5px solid var(--dim); border-radius: 50%;
+    cursor: pointer; display: grid; place-items: center;
+    transition: all .12s;
+  }
+  .box:hover { border-color: var(--mut); }
+  .task.done .box { background: #f2f2f3; border-color: #f2f2f3; }
+  .task.done .box::after { content: none; }
+  .text {
+    flex: 1; min-width: 0; word-wrap: break-word; cursor: text;
+    padding: 1px 2px; border-radius: 4px; outline: none;
+    -webkit-user-select: text; user-select: text; cursor: text;
+  }
+  .text::selection { background: rgba(255,255,255,.35); }
+  #add::selection { background: rgba(0,0,0,.2); }
+  .text:focus { background: rgba(255,255,255,.05); }
+  .task.done .text { color: var(--mut); text-decoration: line-through; }
+  .due {
+    flex: none; font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif;
+    color: var(--mut); padding: 2px 6px; border-radius: 5px; margin-top: 2px;
+    cursor: pointer; position: relative;
+  }
+  .due.soon { color: var(--tx); }
+  .due.late { color: #0a0a0b; background: #f2f2f3; font-weight: 600; }
+  .due.today { color: var(--tx); background: rgba(255,255,255,.12); }
+  .due input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+  .x { flex: none; width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center;
+       color: var(--dim); cursor: pointer; opacity: 0; font-size: 13px; margin-top: 1px; }
+  .task:hover .x, .task:hover .due { opacity: 1; }
+  .due:not(.set) { opacity: 0; }
+  .x:hover { color: var(--tx); background: rgba(255,255,255,.1); }
+  .grip { flex: none; width: 8px; color: var(--dim); cursor: grab; opacity: 0; font-size: 11px; margin-top: 3px; }
+  .task:hover .grip { opacity: .7; }
+
+  #done-hd {
+    display: flex; align-items: center; gap: 8px; margin: 10px 6px 4px;
+    font: 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif; color: var(--dim);
+    letter-spacing: .05em; text-transform: uppercase; cursor: pointer;
+  }
+  #done-hd:hover { color: var(--mut); }
+  #done-hd .clr { margin-left: auto; color: var(--dim); }
+  #done-hd .clr:hover { color: var(--tx); }
+  #done.collapsed .task { display: none; }
+
+  #empty { color: var(--dim); text-align: center; padding: 40px 20px; font-size: 12px; }
+
+  footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 12px; border-top: 1px solid var(--line);
+    font: 10px -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif; color: var(--dim); letter-spacing: .04em;
+  }
+  footer span:hover { color: var(--mut); cursor: pointer; }
+</style>
+<link rel="stylesheet" href="web.css">
+<script src="sync.js"></script>
+</head>
+<body>
+<div id="app">
+  <canvas id="bg"></canvas>
+  <header>
+    <div class="nav" id="prev" title="⌘[">‹</div>
+    <div id="listname"></div>
+    <div class="nav" id="pick" title="Switch list">▾</div>
+    <div id="count"></div>
+    <div class="nav" id="next" title="⌘]">›</div>
+    <div class="nav" id="min" title="Minimise">–</div>
+  </header>
+  <div id="picker"></div>
+  <div id="addwrap"><input id="add" placeholder="Add a task… (Enter)" autocomplete="off" spellcheck="true"></div>
+  <div id="tasks">
+    <div id="open"></div>
+    <div id="done-hd" style="display:none"><span id="done-lbl"></span><span class="clr" id="clear" title="Remove all completed tasks from the list">clear done</span></div>
+    <div id="done"></div>
+    <div id="empty" style="display:none">Nothing here. Type above.</div>
+  </div>
+  <footer><span id="openfile">open .md</span><span id="sync-status" role="status"></span><span><b style="font-weight:300">slate</b> ⌃X</span></footer>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  let lists = [], cur = null, today = "";
+  let dragI = null;
+
+  // -- bridge -------------------------------------------------------------
+  const send = (cmd, extra = {}) =>
+    window.webkit.messageHandlers.slate.postMessage(JSON.stringify({ cmd, list: cur, ...extra }));
+
+  window.slateReceive = (msg) => {
+    if (msg.event === "lists") {
+      lists = msg.lists; today = msg.today;
+      if (!lists.find(l => l.id === cur)) cur = msg.current && lists.find(l => l.id === msg.current) ? msg.current : (lists[0] && lists[0].id);
+      render();
+    } else if (msg.event === "sync") {
+      const status = $("#sync-status");
+      status.textContent = msg.error ? (msg.error === "Sign in to sync" ? "sign in to sync" : "offline · " + msg.pending + " queued") : (msg.pending ? msg.pending + " queued" : "synced");
+      status.title = msg.error || "Tasks are up to date";
+    } else if (msg.event === "focus") {
+      document.body.classList.add("active");
+      $("#add").focus(); $("#add").select();
+    } else if (msg.event === "collapsed") {
+      document.body.classList.toggle("collapsed", !!msg.on);
+      $("#min").textContent = msg.on ? "+" : "–";
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 260);
+    } else if (msg.event === "blur") {
+      document.body.classList.remove("active");
+      $("#picker").classList.remove("open");
+      $("#add").blur();
+    }
+  };
+
+  // -- render -------------------------------------------------------------
+  const list = () => lists.find(l => l.id === cur);
+
+  function dueLabel(d) {
+    const [y, m, dd] = d.split("-").map(Number);
+    const dt = new Date(y, m - 1, dd);
+    return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function dueClass(d) {
+    if (!d) return "";
+    if (d < today) return "late";
+    if (d === today) return "today";
+    const diff = (new Date(d) - new Date(today)) / 864e5;
+    return diff <= 3 ? "soon" : "";
+  }
+
+  function taskEl(t) {
+    const el = document.createElement("div");
+    el.className = "task" + (t.done ? " done" : "");
+    el.dataset.i = t.i;
+    el.draggable = !t.done;
+
+    const grip = document.createElement("div"); grip.className = "grip"; grip.textContent = "⋮";
+    const box = document.createElement("div"); box.className = "box";
+    box.onclick = () => send("toggle", { i: t.i, done: !t.done });
+
+    const text = document.createElement("div");
+    text.className = "text"; text.textContent = t.text; text.contentEditable = "plaintext-only";
+    text.spellcheck = true;
+    text.onfocus = () => { send("editing", { on: true }); };
+    text.onblur = () => {
+      send("editing", { on: false });
+      const v = text.textContent.trim();
+      if (!v) send("remove", { i: t.i });
+      else if (v !== t.text) send("edit", { i: t.i, text: v });
+    };
+    text.onkeydown = e => {
+      if (e.key === "Enter") { e.preventDefault(); text.blur(); $("#add").focus(); }
+      if (e.key === "Escape") { e.preventDefault(); text.textContent = t.text; text.blur(); }
+    };
+
+    const due = document.createElement("label");
+    due.className = "due " + (t.due ? "set " : "") + dueClass(t.due);
+    due.textContent = t.due ? dueLabel(t.due) : "📅";
+    const inp = document.createElement("input"); inp.type = "date"; inp.value = t.due || "";
+    inp.onchange = () => send("due", { i: t.i, due: inp.value });
+    inp.onfocus = () => send("editing", { on: true });
+    inp.onblur = () => send("editing", { on: false });
+    due.appendChild(inp);
+    if (t.due) {
+      due.title = "double-click to clear";
+      due.ondblclick = e => { e.preventDefault(); send("due", { i: t.i, due: "" }); };
+    }
+
+    const x = document.createElement("div"); x.className = "x"; x.textContent = "✕";
+    x.onclick = () => send("remove", { i: t.i });
+
+    el.append(grip, box, text, due, x);
+
+    // drag to reorder (open tasks only)
+    el.ondragstart = e => { dragI = t.i; el.classList.add("drag"); e.dataTransfer.effectAllowed = "move"; };
+    el.ondragend = () => { dragI = null; document.querySelectorAll(".task").forEach(n => n.classList.remove("drag", "over")); };
+    el.ondragover = e => { if (dragI !== null && !t.done) { e.preventDefault(); el.classList.add("over"); } };
+    el.ondragleave = () => el.classList.remove("over");
+    el.ondrop = e => {
+      e.preventDefault();
+      if (dragI === null || dragI === t.i) return;
+      const open = list().tasks.filter(x => !x.done).map(x => x.i);
+      const from = open.indexOf(dragI), to = open.indexOf(t.i);
+      open.splice(from, 1); open.splice(to, 0, dragI);
+      const done = list().tasks.filter(x => x.done).map(x => x.i);
+      send("reorder", { order: open.concat(done) });
+    };
+    return el;
+  }
+
+  function render() {
+    const l = list();
+    $("#listname").textContent = l ? l.title : "—";
+    const open = $("#open"), done = $("#done");
+    open.innerHTML = ""; done.innerHTML = "";
+    if (!l) return;
+    const o = l.tasks.filter(t => !t.done), d = l.tasks.filter(t => t.done);
+    o.forEach(t => open.appendChild(taskEl(t)));
+    d.forEach(t => done.appendChild(taskEl(t)));
+    $("#count").textContent = o.length ? String(o.length) : "";
+    $("#done-hd").style.display = d.length ? "flex" : "none";
+    $("#done-lbl").textContent = `done · ${d.length}`;
+    $("#empty").style.display = (o.length + d.length) ? "none" : "block";
+    renderPicker();
+  }
+
+  function renderPicker() {
+    const p = $("#picker"); p.innerHTML = "";
+    lists.forEach(l => {
+      const o = document.createElement("div");
+      o.className = "opt" + (l.id === cur ? " cur" : "");
+      const n = l.tasks.filter(t => !t.done).length;
+      o.innerHTML = `<div></div><span>${n || ""}</span>`;
+      o.firstChild.textContent = l.title;
+      o.onclick = () => { const a = lists.findIndex(x => x.id === cur), b = lists.indexOf(l); select(l.id, Math.sign(b - a)); p.classList.remove("open"); };
+      p.appendChild(o);
+    });
+    const nw = document.createElement("div"); nw.className = "opt new"; nw.textContent = "+ new list";
+    nw.onclick = () => {
+      const i = document.createElement("input"); i.placeholder = "List name";
+      nw.replaceWith(i); i.focus();
+      i.onkeydown = e => {
+        if (e.key === "Enter" && i.value.trim()) { send("new_list", { title: i.value.trim() }); p.classList.remove("open"); }
+        if (e.key === "Escape") { renderPicker(); }
+      };
+    };
+    p.appendChild(nw);
+  }
+
+  function select(id, dir = 0) {
+    if (id === cur) return;
+    const tasks = $("#tasks"), name = $("#listname");
+    const commit = () => { cur = id; send("select"); render(); };
+    if (!dir) { commit(); return; }
+    // slide the old list out, swap, slide the new one in
+    tasks.className = dir > 0 ? "out-l" : "out-r"; name.classList.add("swap");
+    setTimeout(() => {
+      commit();
+      tasks.className = dir > 0 ? "in-l" : "in-r"; name.classList.remove("swap");
+      setTimeout(() => { tasks.className = ""; }, 240);
+    }, 150);
+  }
+  function step(n) {
+    if (!lists.length) return;
+    const i = lists.findIndex(l => l.id === cur);
+    select(lists[(i + n + lists.length) % lists.length].id, n);
+  }
+
+  // -- wiring -------------------------------------------------------------
+  // -- move (drag the header) & minimise ------------------------------------
+  const hdr = document.querySelector("header");
+  $("#min").onclick = () => send("collapse", { on: !document.body.classList.contains("collapsed") });
+  hdr.addEventListener("dblclick", e => { if (!e.target.closest(".nav")) $("#min").onclick(); });
+
+  $("#prev").onclick = () => step(-1);
+  $("#next").onclick = () => step(1);
+  $("#pick").onclick = () => $("#picker").classList.toggle("open");
+  $("#openfile").onclick = () => send("open_file");
+  $("#done-hd").onclick = e => { if (e.target.id !== "clear") $("#done").classList.toggle("collapsed"); };
+  $("#clear").onclick = () => send("clear_done");
+
+  const add = $("#add");
+  add.onfocus = () => send("editing", { on: true });
+  add.onblur = () => send("editing", { on: false });
+  add.onkeydown = e => {
+    if (e.key === "Enter" && add.value.trim()) {
+      let text = add.value.trim(), due = null;
+      // "task text @tomorrow" / "@fri" / "@2026-09-20" shorthand
+      const m = text.match(/\s@(\S+)$/);
+      if (m) { const d = parseDue(m[1]); if (d) { due = d; text = text.slice(0, m.index); } }
+      send("add", { text, due }); add.value = "";
+    }
+  };
+  function parseDue(s) {
+    s = s.toLowerCase();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const base = new Date(today + "T00:00:00");
+    const fmt = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    if (s === "today") return fmt(base);
+    if (s === "tomorrow" || s === "tmr") { base.setDate(base.getDate() + 1); return fmt(base); }
+    const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const di = days.findIndex(d => s.startsWith(d));
+    if (di >= 0) { let n = (di - base.getDay() + 7) % 7 || 7; base.setDate(base.getDate() + n); return fmt(base); }
+    const m = s.match(/^(\d{1,2})d$/); if (m) { base.setDate(base.getDate() + +m[1]); return fmt(base); }
+    return null;
+  }
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") { e.preventDefault(); send("dismiss"); return; }
+    if (e.metaKey && e.key === "[") { e.preventDefault(); step(-1); }
+    if (e.metaKey && e.key === "]") { e.preventDefault(); step(1); }
+    if (e.metaKey && /^[1-9]$/.test(e.key)) { const l = lists[+e.key - 1]; if (l) { e.preventDefault(); select(l.id); } }
+  });
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#picker, #pick")) $("#picker").classList.remove("open");
+  });
+
+  send("init");
+
+  // -- background: a real dot sphere, projected, rotating, drifting ----------
+  (() => {
+    const cv = $("#bg"), ctx = cv.getContext("2d");
+    let W = 0, H = 0, dpr = 1, pts = [], raf = 0, last = 0;
+    // lat/long grid — even spacing along each ring, like a plotted globe
+    (function build() {
+      const step = 3.2 * Math.PI / 180;
+      for (let lat = -Math.PI / 2 + step; lat < Math.PI / 2; lat += step) {
+        const r = Math.cos(lat), n = Math.max(6, Math.round(2 * Math.PI * r / step));
+        for (let i = 0; i < n; i++) {
+          const lon = i / n * 2 * Math.PI;
+          pts.push([r * Math.cos(lon), Math.sin(lat), r * Math.sin(lon)]);
+        }
+      }
+    })();
+    function size() {
+      const r = cv.getBoundingClientRect();
+      dpr = window.devicePixelRatio || 1; W = r.width; H = r.height;
+      cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function frame(t) {
+      raf = requestAnimationFrame(frame);
+      if (t - last < 33) return; last = t;          // ~30 fps is plenty
+      const s = t / 1000;
+      // Smaller sphere, pushed further off the corner: its limb covers
+      // roughly the top-right 40% of the panel, not the whole thing.
+      const R = Math.max(W, H) * 0.62;
+      const cx = W * 1.08 + Math.sin(s * 0.11) * W * 0.06;
+      const cy = H * -0.02 + Math.cos(s * 0.08) * H * 0.06;
+      const ay = s * 0.05, ax = 0.35 + Math.sin(s * 0.06) * 0.18;
+      const cy_ = Math.cos(ay), sy_ = Math.sin(ay), cx_ = Math.cos(ax), sx_ = Math.sin(ax);
+      ctx.clearRect(0, 0, W, H);
+      for (const [x0, y0, z0] of pts) {
+        // rotate about Y then tilt about X
+        const x1 = x0 * cy_ + z0 * sy_, z1 = -x0 * sy_ + z0 * cy_;
+        const y2 = y0 * cx_ - z1 * sx_, z2 = y0 * sx_ + z1 * cx_;
+        if (z2 < 0.02) continue;                    // back hemisphere
+        const px = cx + x1 * R, py = cy - y2 * R;
+        if (px < -2 || px > W + 2 || py < -2 || py > H + 2) continue;
+        const a = 0.10 + 0.55 * z2, d = 0.7 + 1.1 * z2;
+        ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+        ctx.fillRect(px - d / 2, py - d / 2, d, d);
+      }
+    }
+    size(); window.addEventListener("resize", size);
+    raf = requestAnimationFrame(frame);
+  })();
+})();
+</script>
+</body>
+</html>
