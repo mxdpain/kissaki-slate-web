@@ -189,7 +189,8 @@
   footer span:hover { color: var(--mut); cursor: pointer; }
 </style>
 <link rel="stylesheet" href="web.css">
-<script src="sync.js?v=2026-10-04-2"></script>
+<script src="realtime.js?v=2026-10-21-1"></script>
+<script src="sync.js?v=2026-10-21-1"></script>
 </head>
 <body>
 <div id="app">
@@ -230,7 +231,7 @@
       render();
     } else if (msg.event === "sync") {
       const status = $("#sync-status");
-      status.textContent = msg.error ? (msg.error === "Sign in to sync" ? "sign in to sync" : "offline · " + msg.pending + " queued") : (msg.pending ? msg.pending + " queued" : "synced");
+      status.textContent = msg.error ? (msg.error === "Sign in to sync" ? "sign in to sync" : msg.error === "Reconnecting live updates" ? "reconnecting" : "offline · " + msg.pending + " queued") : (msg.pending ? msg.pending + " queued" : "synced");
       status.title = msg.error || "Tasks are up to date";
     } else if (msg.event === "focus") {
       document.body.classList.add("active");

@@ -4,7 +4,8 @@
   'use strict';
   const names = ['Uj', 'Juan', 'Eddy', 'Plas', 'Verso', 'Dev'];
   let deployedConfig = false;
-  let config, state, session, editing = false, busy = false, baseline = null;
+  let config, state, session, editing = false, busy = false;
+  let serverRevision=null, live=null, liveConnected=false, syncRequested=false, retryTimer=null, retryDelay=2000, notifyButton=null;
   let receiveReady = false, refreshBusy = null, ownsTab = false;
   const configKey = 'slate.config';
   const sessionKey = 'slate.session';
@@ -14,7 +15,7 @@
   const cache = () => ({rows:{}, lists:names.slice(), outbox:[], current:config.me});
   const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
   const receive = value => { if (window.slateReceive) window.slateReceive(value); };
-  const syncStatus = (error = null) => receive({event:'sync', error, pending:state?.outbox.length || 0});
+  const syncStatus = (error = null) => receive({event:'sync', error:error || (liveConnected ? null : 'Reconnecting live updates'), pending:state?.outbox.length || 0});
   const rowOrder = (a,b) => a.position-b.position || (a.created_at || '').localeCompare(b.created_at || '') || a.id.localeCompare(b.id);
   const snapshot = () => state.lists.slice().sort((a,b) => (names.includes(a)?names.indexOf(a):99)-(names.includes(b)?names.indexOf(b):99) || a.localeCompare(b)).map(name => ({
     id:name, title:name, tasks:Object.values(state.rows).filter(r=>r.list===name).sort(rowOrder).map(r=>({...r,i:r.id}))
@@ -74,26 +75,64 @@
     await api('rpc/slate_apply','POST',{op_key:entry.key,operation:entry.op,payload:entry.data});
   }
   async function sync() {
-    if(busy||!config||!state||!session||!ownsTab)return;
+    if(!config||!state||!session||!ownsTab)return;
+    if(busy){syncRequested=true;return;}
+    clearTimeout(retryTimer);syncRequested=false;
     busy=true;
     try {
-      const members=await api('slate_members?select=name');
-      if(members.length!==1||members[0].name!==config.me)throw Error('This email is not approved for '+config.me+'.');
       while(state.outbox.length) {
         const first=state.outbox[0]; await sendEntry(first);
         state.outbox=state.outbox.filter(e=>e.key!==first.key); save();
       }
-      const remote=await api('rpc/slate_snapshot','POST',{});
-      const rows=Object.fromEntries(remote.tasks.map(row=>[row.id,row]));
-      state.outbox.forEach(op=>apply(rows,op));
-      const now=new Set(Object.keys(rows).filter(id=>rows[id].list===config.me));
-      if(baseline)for(const id of now)if(!baseline.has(id)&&!rows[id].done&&rows[id].created_by!==config.me&&'Notification'in window&&Notification.permission==='granted')new Notification('New task for '+config.me,{body:rows[id].text});
-      baseline=now;
-      state.rows=rows;
-      state.lists=[...new Set([...names,...remote.lists.map(l=>l.name),...Object.values(rows).map(r=>r.list),...state.lists])];
-      save(); render(); syncStatus();
-    } catch(e) { syncStatus(e.message); }
-    finally{busy=false;}
+      const remote=await api('rpc/slate_snapshot_v2','POST',{known_revision:serverRevision});
+      if(remote.member!==config.me)throw Error('This email is not approved for '+config.me+'.');
+      if(!remote.unchanged){
+        const rows=Object.fromEntries(remote.tasks.map(row=>[row.id,row]));
+        state.outbox.forEach(op=>apply(rows,op));
+        state.rows=rows;
+        state.lists=[...new Set([...names,...remote.lists.map(l=>l.name),...Object.values(rows).map(r=>r.list),...state.lists])];
+        save();serverRevision=remote.revision;render();
+      }
+      notifyAssignments();syncStatus();retryDelay=2000;
+    } catch(e) {
+      syncStatus(e.message);
+      retryTimer=setTimeout(()=>void sync(),retryDelay);retryDelay=Math.min(60000,retryDelay*2);
+    }
+    finally{busy=false;if(syncRequested)queueMicrotask(()=>void sync());}
+  }
+  function prepareNotifications() {
+    if(!state.notified && Object.keys(state.rows).length){
+      state.notified=Object.values(state.rows).filter(r=>r.list===config.me).map(r=>r.id);save();
+    }
+  }
+  function notifyAssignments() {
+    const mine=Object.values(state.rows).filter(r=>r.list===config.me);
+    if(!state.notified){state.notified=mine.map(r=>r.id);save();return;}
+    const seen=new Set(state.notified);
+    const pending=mine.filter(r=>!r.done&&!seen.has(r.id));
+    mine.filter(r=>r.done).forEach(r=>seen.add(r.id));
+    if(pending.length&&'Notification'in window&&Notification.permission==='granted'){
+      try {
+        const n=new Notification(pending.length===1?'New task for '+config.me:pending.length+' new tasks for '+config.me,
+          {body:pending.slice(0,4).map(r=>r.text).join('\n')+(pending.length>4?'\n+'+(pending.length-4)+' more tasks':''),tag:'slate-'+pending[0].id});
+        n.onclick=()=>{window.focus();state.current=config.me;save();render(true);n.close();};
+        pending.forEach(r=>seen.add(r.id));
+      }catch{ /* Keep assignments pending so a later attempt can deliver them. */ }
+    }
+    state.notified=[...seen];save();
+  }
+  function notificationLabel() {
+    if(!notifyButton)return;
+    notifyButton.textContent=Notification.permission==='granted'?'alerts on':Notification.permission==='denied'?'alerts blocked':'enable alerts';
+    notifyButton.title=Notification.permission==='denied'?'Allow notifications for Slate in your browser site settings.':'Show desktop alerts for new tasks on your list.';
+  }
+  function startLive() {
+    live?.stop();serverRevision=null;liveConnected=false;
+    if(!config||!session||!ownsTab)return;
+    live=new window.SlateRealtime({url:config.supabase_url,key:config.supabase_anon_key,token,
+      changed:()=>void sync(),status:connected=>{liveConnected=connected;syncStatus();}});
+    // Catch up after opening; joining the subscription performs another conditional catch-up.
+    void sync();
   }
   function command(msg) {
     if(msg.cmd==='init'){receiveReady=true;render();return;}
@@ -170,7 +209,7 @@
           if(members.length!==1||members[0].name!==config.me)throw Error('This email is not approved for '+config.me+'.');
           session=result;session.expires_at||=Math.floor(Date.now()/1000)+result.expires_in;
           localStorage.setItem(sessionKey+':'+config.supabase_url,JSON.stringify(session));
-          state=load(stateKey(),cache());baseline=null;overlay.remove();render();void sync();
+          state=load(stateKey(),cache());prepareNotifications();overlay.remove();render();startLive();
         }
       }catch(e){message.textContent=e.message;}finally{button.disabled=false;}
     };
@@ -188,15 +227,14 @@
     const footer=document.querySelector('footer');
     document.querySelector('#openfile').textContent='export .md';
     const sign=document.createElement('button');sign.textContent='sign in';sign.onclick=()=>{if(!document.querySelector('#signin'))panel();};footer.append(sign);
-    if('Notification'in window){const notify=document.createElement('button');notify.textContent='notifications';notify.onclick=()=>Notification.requestPermission();footer.append(notify);}
+    if('Notification'in window){notifyButton=document.createElement('button');notificationLabel();notifyButton.onclick=async()=>{if(Notification.permission==='denied'){alert('Allow notifications for Slate in your browser site settings.');return;}await Notification.requestPermission();notificationLabel();if(state)notifyAssignments();};footer.append(notifyButton);}
     try {
       config=load(configKey,null);
       if(!config){try{const r=await fetch('./config.json');if(r.ok){config={...await r.json(),me:names[0]};deployedConfig=true;}}catch{}}
-      if(config){config=validConfig(config);state=load(stateKey(),cache());session=load(sessionKey+':'+config.supabase_url,null);render();}
+      if(config){config=validConfig(config);state=load(stateKey(),cache());session=load(sessionKey+':'+config.supabase_url,null);prepareNotifications();render();}
     }catch{config=null;}
-    if(!session)panel();else void sync();
-    setInterval(()=>{void sync();},2500);
-    window.addEventListener('online',()=>void sync());
+    if(!session)panel();else startLive();
+    window.addEventListener('online',()=>startLive());
     window.addEventListener('beforeunload',e=>{if(state?.outbox.length){e.preventDefault();e.returnValue='';}});
   });
 })();
