@@ -6,6 +6,7 @@
   let deployedConfig = false;
   let config, state, session, editing = false, busy = false;
   let serverRevision=null, live=null, liveConnected=false, syncRequested=false, retryTimer=null, retryDelay=2000, notifyButton=null;
+  let workspace=null;
   let receiveReady = false, refreshBusy = null, ownsTab = false;
   const configKey = 'slate.config';
   const sessionKey = 'slate.session';
@@ -15,13 +16,13 @@
   const cache = () => ({rows:{}, lists:names.slice(), outbox:[], current:config.me});
   const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
   const receive = value => { if (window.slateReceive) window.slateReceive(value); };
-  const syncStatus = (error = null) => receive({event:'sync', error:error || (liveConnected ? null : 'Reconnecting live updates'), pending:state?.outbox.length || 0});
+  const syncStatus = (error = null) => receive({event:'sync', error:error || (liveConnected ? null : 'Reconnecting live updates'), pending:state?.outbox.length || 0,conflicts:state?.conflicts?.length||0});
   const rowOrder = (a,b) => a.position-b.position || (a.created_at || '').localeCompare(b.created_at || '') || a.id.localeCompare(b.id);
   const snapshot = () => state.lists.slice().sort((a,b) => (names.includes(a)?names.indexOf(a):99)-(names.includes(b)?names.indexOf(b):99) || a.localeCompare(b)).map(name => ({
     id:name, title:name, tasks:Object.values(state.rows).filter(r=>r.list===name).sort(rowOrder).map(r=>({...r,i:r.id}))
   }));
   function render(force = false) {
-    if (receiveReady && (force || !editing) && state) receive({event:'lists', lists:snapshot(), current:state.current, today:today()});
+    if (receiveReady && (force || !editing) && state) receive({event:'lists', lists:[...snapshot(),...(workspace?.snapshot()||[])], current:state.current, today:today()});
   }
   function validConfig(value) {
     const url = new URL(value.supabase_url);
@@ -34,7 +35,7 @@
         if (body.role === 'service_role') throw Error('Never use a service-role key in Slate.');
       } catch (e) { if (e.message.includes('service-role')) throw e; }
     }
-    return {...value, supabase_url:url.origin};
+    return {...value, supabase_url:url.origin,workspace_url:value.workspace_url||'https://kissaki-studios.netlify.app'};
   }
   async function raw(path, method='GET', data, token, extra={}) {
     const headers = {apikey:config.supabase_anon_key, 'Content-Type':'application/json', ...extra};
@@ -65,6 +66,7 @@
   function queue(op,data) {
     const previous = structuredClone(state);
     try {
+      if(['update','remove'].includes(op)&&state.rows[data.id])data={...data,expected:Object.fromEntries([...new Set([...(op==='update'?Object.keys(data.fields):['text','due','done']),'list'])].map(k=>[k,state.rows[data.id][k]??null]))};
       const entry={key:crypto.randomUUID(),op,data};
       state.outbox.push(entry); apply(state.rows,entry);
       if(op==='list'&&!state.lists.includes(data.name))state.lists.push(data.name);
@@ -72,6 +74,13 @@
     } catch (e) { state=previous; throw Error('Cannot save this edit on your device. Free some storage and retry.'); }
   }
   async function sendEntry(entry) {
+    if(['update','remove'].includes(entry.op)){
+      const data=entry.data;if(!data.expected)throw Object.assign(Error('Older edit needs review'),{conflict:true});
+      const query=new URLSearchParams({id:'eq.'+data.id});Object.entries(data.expected).forEach(([k,v])=>query.set(k,v===null?'is.null':'eq.'+String(v)));
+      const result=await api('tasks?'+query,entry.op==='update'?'PATCH':'DELETE',entry.op==='update'?data.fields:undefined,{Prefer:'return=representation'});
+      if(Array.isArray(result)&&!result.length){const current=await api('tasks?id=eq.'+data.id+'&select=*');if(entry.op==='remove'&&!current.length)return;if(entry.op==='update'&&current[0]&&Object.entries(data.fields).every(([k,v])=>current[0][k]===v))return;throw Object.assign(Error('Newer change exists; draft preserved'),{conflict:true});}
+      return;
+    }
     await api('rpc/slate_apply','POST',{op_key:entry.key,operation:entry.op,payload:entry.data});
   }
   async function sync() {
@@ -81,7 +90,7 @@
     busy=true;
     try {
       while(state.outbox.length) {
-        const first=state.outbox[0]; await sendEntry(first);
+        const first=state.outbox[0]; try{await sendEntry(first)}catch(e){if(!e.conflict)throw e;(state.conflicts||=[]).push(first);serverRevision=null;}
         state.outbox=state.outbox.filter(e=>e.key!==first.key); save();
       }
       const remote=await api('rpc/slate_snapshot_v2','POST',{known_revision:serverRevision});
@@ -129,6 +138,7 @@
   function startLive() {
     live?.stop();serverRevision=null;liveConnected=false;
     if(!config||!session||!ownsTab)return;
+    workspace?.stop();workspace=null;if(config?.workspace_url&&window.SlateWorkspace)workspace=new window.SlateWorkspace({url:config.workspace_url,account:config.me,token,changed:()=>render(),error:syncStatus});
     live=new window.SlateRealtime({url:config.supabase_url,key:config.supabase_anon_key,token,
       changed:()=>void sync(),status:connected=>{liveConnected=connected;syncStatus();}});
     // Catch up after opening; joining the subscription performs another conditional catch-up.
@@ -137,6 +147,9 @@
   function command(msg) {
     if(msg.cmd==='init'){receiveReady=true;render();return;}
     if(!state)return;
+    if(msg.cmd==='sync_details'){alert(JSON.stringify([...(state.conflicts||[]),...(workspace?.state.conflicts||[])],null,2));return;}
+    if(msg.cmd==='open_workspace'){window.open((config.workspace_url||'https://kissaki-studios.netlify.app')+'/?note='+encodeURIComponent((msg.list||'').split(':')[1]||''),'_blank','noopener');return;}
+    if(msg.list?.startsWith('workspace:')&&['add','toggle','edit','due','remove','reorder','clear_done'].includes(msg.cmd)){workspace?.command(msg);return;}
     if(!ownsTab && !['select','collapse','dismiss','editing','open_file'].includes(msg.cmd)){alert('Slate is open in another tab. Close that tab, then refresh this one.');return;}
     try {
       const lid=msg.list;
@@ -195,7 +208,7 @@
     form.onsubmit=async e=>{
       e.preventDefault();button.disabled=true;message.textContent='';
       try {
-        const next=validConfig({supabase_url:form.elements.url.value,supabase_anon_key:form.elements.key.value,me:form.elements.me.value,email:form.elements.email.value.trim()});
+        const next=validConfig({supabase_url:form.elements.url.value,supabase_anon_key:form.elements.key.value,me:form.elements.me.value,email:form.elements.email.value.trim(),workspace_url:config?.workspace_url});
         if(state?.outbox.length && config && (next.me!==config.me||next.supabase_url!==config.supabase_url))throw Error('Sync queued edits before switching accounts.');
         config=next;localStorage.setItem(configKey,JSON.stringify(config));
         if(!codeSent){

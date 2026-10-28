@@ -190,7 +190,8 @@
 </style>
 <link rel="stylesheet" href="web.css">
 <script src="realtime.js?v=2026-10-21-1"></script>
-<script src="sync.js?v=2026-10-21-1"></script>
+<script src="workspace.js"></script>
+<script src="sync.js?v=2026-10-27-workspace-1"></script>
 </head>
 <body>
 <div id="app">
@@ -231,7 +232,7 @@
       render();
     } else if (msg.event === "sync") {
       const status = $("#sync-status");
-      status.textContent = msg.error ? (msg.error === "Sign in to sync" ? "sign in to sync" : msg.error === "Reconnecting live updates" ? "reconnecting" : "offline · " + msg.pending + " queued") : (msg.pending ? msg.pending + " queued" : "synced");
+      status.textContent = msg.conflicts ? msg.conflicts + " conflicts · review" : msg.error ? (msg.error === "Sign in to sync" ? "sign in to sync" : msg.error === "Reconnecting live updates" ? "reconnecting" : "offline · " + msg.pending + " queued") : (msg.pending ? msg.pending + " queued" : "synced");
       status.title = msg.error || "Tasks are up to date";
     } else if (msg.event === "focus") {
       document.body.classList.add("active");
@@ -305,6 +306,10 @@
     x.onclick = () => send("remove", { i: t.i });
 
     el.append(grip, box, text, due, x);
+    if (t.assignee) el.title = 'Assigned to ' + t.assignee;
+    if (t.readonly) { box.onclick = null; text.contentEditable = 'false'; inp.disabled = true; x.onclick = null; }
+    if (cur.startsWith('workspace:')) { el.draggable = false; grip.style.visibility = 'hidden'; }
+
 
     // drag to reorder (open tasks only)
     el.ondragstart = e => { dragI = t.i; el.classList.add("drag"); e.dataTransfer.effectAllowed = "move"; };
@@ -325,6 +330,7 @@
 
   function render() {
     const l = list();
+    $("#openfile").textContent = cur?.startsWith("workspace:") ? "open note" : "export .md";
     $("#listname").textContent = l ? l.title : "—";
     const open = $("#open"), done = $("#done");
     open.innerHTML = ""; done.innerHTML = "";
@@ -390,7 +396,7 @@
   $("#prev").onclick = () => step(-1);
   $("#next").onclick = () => step(1);
   $("#pick").onclick = () => $("#picker").classList.toggle("open");
-  $("#openfile").onclick = () => send("open_file");
+  $("#openfile").onclick = () => send(cur.startsWith("workspace:") ? "open_workspace" : "open_file");
   $("#done-hd").onclick = e => { if (e.target.id !== "clear") $("#done").classList.toggle("collapsed"); };
   $("#clear").onclick = () => send("clear_done");
 
