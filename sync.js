@@ -22,7 +22,7 @@
     id:name, title:name, tasks:Object.values(state.rows).filter(r=>r.list===name).sort(rowOrder).map(r=>({...r,i:r.id}))
   }));
   function render(force = false) {
-    if (receiveReady && (force || !editing) && state) receive({event:'lists', lists:[...snapshot(),...(workspace?.snapshot()||[])], current:state.current, today:today()});
+    if (receiveReady && (force || !editing) && state) receive({event:'lists', lists:[...snapshot(),...(workspace?.snapshot()||[])], current:state.current, today:today(), cloud:true, games:workspace?.games||[]});
   }
   function validConfig(value) {
     const url = new URL(value.supabase_url);
@@ -81,7 +81,8 @@
       if(Array.isArray(result)&&!result.length){const current=await api('tasks?id=eq.'+data.id+'&select=*');if(entry.op==='remove'&&!current.length)return;if(entry.op==='update'&&current[0]&&Object.entries(data.fields).every(([k,v])=>current[0][k]===v))return;throw Object.assign(Error('Newer change exists; draft preserved'),{conflict:true});}
       return;
     }
-    await api('rpc/slate_apply','POST',{op_key:entry.key,operation:entry.op,payload:entry.data});
+    if(entry.op==='add'&&'game_id' in entry.data)await api('rpc/slate_add_with_game','POST',{op_key:entry.key,payload:entry.data});
+    else await api('rpc/slate_apply','POST',{op_key:entry.key,operation:entry.op,payload:entry.data});
   }
   async function sync() {
     if(!config||!state||!session||!ownsTab)return;
@@ -156,18 +157,18 @@
       const row=state.rows[msg.i];
       const belongs=row&&row.list===lid;
       if(msg.cmd==='editing'){editing=msg.on;if(!editing)render();return;}
-      if(msg.cmd==='select'){state.current=lid;save();return;}
+      if(msg.cmd==='select'){state.current=lid;if(lid?.startsWith('workspace:'))workspace?.refresh();save();return;}
       if(msg.cmd==='collapse'){receive({event:'collapsed',on:msg.on});return;}
       if(msg.cmd==='dismiss'){receive({event:'blur'});return;}
       if(msg.cmd==='open_file'){download(lid);return;}
       if(msg.cmd==='add'&&msg.text.trim()&&state.lists.includes(lid)){
         const now=new Date().toISOString();
-        queue('add',{id:crypto.randomUUID(),list:lid,text:msg.text.trim(),due:msg.due||null,done:false,
+        queue('add',{id:crypto.randomUUID(),list:lid,text:msg.text.trim(),due:msg.due||null,game_id:msg.game_id||null,done:false,
           position:Math.max(-1000,...Object.values(state.rows).filter(r=>r.list===lid).map(r=>r.position))+1000,
           created_by:config.me,created_at:now,updated_at:now});
       }
-      if(['toggle','edit','due'].includes(msg.cmd)&&belongs){
-        const fields=msg.cmd==='toggle'?{done:msg.done}:msg.cmd==='due'?{due:msg.due||null}:{text:msg.text.trim()};
+      if(['toggle','edit','due','game'].includes(msg.cmd)&&belongs){
+        const fields=msg.cmd==='game'?{game_id:msg.game_id||null}:msg.cmd==='toggle'?{done:msg.done}:msg.cmd==='due'?{due:msg.due||null}:{text:msg.text.trim()};
         queue('update',{id:msg.i,list:lid,fields});
       }
       if(msg.cmd==='remove'&&belongs)queue('remove',{id:msg.i,list:lid});

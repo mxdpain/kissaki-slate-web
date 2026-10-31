@@ -3,7 +3,7 @@
  class SlateWorkspace {
   constructor({url,account,token,changed,error}){
    if(!['https://kissaki-studios.netlify.app','https://kissaki-handoff-test.netlify.app'].includes(url))throw Error('Invalid workspace origin');
-   Object.assign(this,{url,token,changed,error});this.key='slate.workspace:'+url+':'+String(account);this.etags={};this.authorized=false;
+   Object.assign(this,{url,token,changed,error});this.key='slate.workspace:'+url+':'+String(account);this.etags={};this.authorized=false;this.games=[];this.gamesLoaded=false;this.lastRefresh=0;
    try{this.state=JSON.parse(localStorage.getItem(this.key))||{notes:[],rows:[],outbox:[],conflicts:[]}}catch{throw Error('Cannot read saved workspace edits')}
    void this.sync();
   }
@@ -17,10 +17,12 @@
    if(row&&['toggle','edit','due','remove'].includes(msg.cmd))entry={path:'tasks/'+id,body:{revision:row.revision,fields:msg.cmd==='toggle'?{complete:msg.done}:msg.cmd==='edit'?{body:msg.text.trim()}:msg.cmd==='due'?{due_date:msg.due||null}:{deleted:true}}};
    if(!entry)return;entry.body.requestId=crypto.randomUUID();const previous=structuredClone(this.state);try{this.state.outbox.push(entry);this.apply(entry);this.save()}catch(e){this.state=previous;throw e}this.changed();void this.sync();
   }
+  refresh(){if(Date.now()-this.lastRefresh>=60000)void this.sync()}
   async sync(){if(this.stopped)return;if(this.busy){this.again=true;return}clearTimeout(this.timer);this.busy=true;try{
    while(this.state.outbox.length){const first=this.state.outbox[0];try{await this.request(first.path,first.body)}catch(e){if(!e.conflict)throw e;this.state.conflicts.push(first)}this.state.outbox=this.state.outbox.filter(e=>e.body.requestId!==first.body.requestId);this.etags={};this.save()}
-   const notes=await this.request('notes'),rows=await this.request('tasks');if(this.stopped)return;if(notes)this.state.notes=notes;if(rows){this.state.rows=rows;this.state.outbox.forEach(e=>this.apply(e))}this.authorized=true;this.save();this.changed();if(this.state.conflicts.length)this.error('Workspace conflict saved; open the original note to review.');
-  }catch(e){this.authorized=false;this.changed();this.error(e.message)}finally{this.busy=false;if(!this.stopped)this.timer=setTimeout(()=>this.sync(),this.again?0:30000);this.again=false}}
+   if(!this.gamesLoaded){try{this.games=await this.request('games')||[];this.gamesLoaded=true}catch(e){if(!e.conflict)throw e}}
+   const notes=await this.request('notes'),rows=await this.request('tasks');if(this.stopped)return;if(notes)this.state.notes=notes;if(rows){this.state.rows=rows;this.state.outbox.forEach(e=>this.apply(e))}this.authorized=true;this.lastRefresh=Date.now();this.save();this.changed();if(this.state.conflicts.length)this.error('Workspace conflict saved; open the original note to review.');
+  }catch(e){this.authorized=false;this.changed();this.error(e.message)}finally{this.busy=false;if(!this.stopped)this.timer=setTimeout(()=>this.sync(),this.again?0:1800000);this.again=false}}
   stop(){this.stopped=true;clearTimeout(this.timer)}
  }
  window.SlateWorkspace=SlateWorkspace;

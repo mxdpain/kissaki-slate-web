@@ -102,6 +102,9 @@
   }
 
   /* add ---------------------------------------------------------------- */
+  #task-game { width:100%; margin-bottom:5px; padding:6px 8px; border:1px solid #bbb; border-radius:7px; background:#f0efec; color:#444; font:inherit; font-size:12px; }
+  .task-body { flex:1; min-width:0; }
+  .task-game { max-width:100%; margin-top:3px; border:0; background:transparent; color:#777; font:inherit; font-size:10px; cursor:pointer; }
   #addwrap { padding: 8px 10px 4px; }
   #add {
     width: 100%; padding: 9px 11px;
@@ -190,8 +193,8 @@
 </style>
 <link rel="stylesheet" href="web.css">
 <script src="realtime.js?v=2026-10-21-1"></script>
-<script src="workspace.js"></script>
-<script src="sync.js?v=2026-10-27-workspace-1"></script>
+<script src="workspace.js?v=2026-10-31-game-routing-1"></script>
+<script src="sync.js?v=2026-10-31-game-routing-1"></script>
 </head>
 <body>
 <div id="app">
@@ -205,7 +208,7 @@
     <div class="nav" id="min" title="Minimise">–</div>
   </header>
   <div id="picker"></div>
-  <div id="addwrap"><input id="add" placeholder="Add a task… (Enter)" autocomplete="off" spellcheck="true"></div>
+  <div id="addwrap"><select id="task-game" aria-label="Game for new task" hidden></select><input id="add" placeholder="Add a task… (Enter)" autocomplete="off" spellcheck="true"></div>
   <div id="tasks">
     <div id="open"></div>
     <div id="done-hd" style="display:none"><span id="done-lbl"></span><span class="clr" id="clear" title="Remove all completed tasks from the list">clear done</span></div>
@@ -218,7 +221,7 @@
 <script>
 (() => {
   const $ = s => document.querySelector(s);
-  let lists = [], cur = null, today = "";
+  let lists = [], cur = null, today = "", games = [], cloud = false;
   let dragI = null;
 
   // -- bridge -------------------------------------------------------------
@@ -227,7 +230,7 @@
 
   window.slateReceive = (msg) => {
     if (msg.event === "lists") {
-      lists = msg.lists; today = msg.today;
+      lists = msg.lists; today = msg.today; games = msg.games || []; cloud = !!msg.cloud;
       if (!lists.find(l => l.id === cur)) cur = msg.current && lists.find(l => l.id === msg.current) ? msg.current : (lists[0] && lists[0].id);
       render();
     } else if (msg.event === "sync") {
@@ -264,6 +267,15 @@
     return diff <= 3 ? "soon" : "";
   }
 
+  function gameOptions(select, value, prompt=false) {
+    select.replaceChildren();
+    const option=(v,label)=>{const o=document.createElement('option');o.value=v;o.textContent=label;select.append(o)};
+    if(prompt)option('__choose','Game or General…');
+    option('', 'General · Kissaki Studios');
+    games.forEach(g=>option(g.id,g.name));
+    if(value && value!=='__choose' && !games.some(g=>g.id===value))option(value,'Game unavailable');
+    select.value=value||'';
+  }
   function taskEl(t) {
     const el = document.createElement("div");
     el.className = "task" + (t.done ? " done" : "");
@@ -305,7 +317,9 @@
     const x = document.createElement("div"); x.className = "x"; x.textContent = "✕";
     x.onclick = () => send("remove", { i: t.i });
 
-    el.append(grip, box, text, due, x);
+    const body=document.createElement('div');body.className='task-body';body.append(text);
+    if(cloud&&!cur.startsWith('workspace:')){const route=document.createElement('select');route.className='task-game';route.setAttribute('aria-label','Game for '+t.text);gameOptions(route,t.game_id||'');route.onchange=()=>send('game',{i:t.i,game_id:route.value||null});route.onpointerdown=e=>e.stopPropagation();route.onfocus=()=>send('editing',{on:true});route.onblur=()=>send('editing',{on:false});body.append(route)}
+    el.append(grip, box, body, due, x);
     if (t.assignee) el.title = 'Assigned to ' + t.assignee;
     if (t.readonly) { box.onclick = null; text.contentEditable = 'false'; inp.disabled = true; x.onclick = null; }
     if (cur.startsWith('workspace:')) { el.draggable = false; grip.style.visibility = 'hidden'; }
@@ -330,6 +344,9 @@
 
   function render() {
     const l = list();
+    const route=document.querySelector('#task-game');const selected=route.options.length?route.value:'__choose';
+    route.hidden=!cloud||!!cur?.startsWith('workspace:');
+    gameOptions(route,selected,true);
     $("#openfile").textContent = cur?.startsWith("workspace:") ? "open note" : "export .md";
     $("#listname").textContent = l ? l.title : "—";
     const open = $("#open"), done = $("#done");
@@ -409,7 +426,9 @@
       // "task text @tomorrow" / "@fri" / "@2026-09-20" shorthand
       const m = text.match(/\s@(\S+)$/);
       if (m) { const d = parseDue(m[1]); if (d) { due = d; text = text.slice(0, m.index); } }
-      send("add", { text, due }); add.value = "";
+      const route=document.querySelector('#task-game');
+      if(!route.hidden&&route.value==='__choose'){route.focus();return}
+      send("add", { text, due, game_id:route.hidden?null:(route.value||null) }); add.value = "";
     }
   };
   function parseDue(s) {
